@@ -1,6 +1,31 @@
 # File-Debt-Scan
 File-Debt-Scan is a lightweight, single-file Node.js CLI tool designed to help developers efficiently track technical debt in their codebases. It recursively scans any project directory for TODO and FIXME comments, providing both human-readable and machine-readable JSON outputs. The tool intelligently ignores its own file, default folders like node_modules and .git, and optionally handles hidden files with --exclude-hidden or --only-hidden flags. It supports custom search patterns and additional ignore rules, making it flexible for diverse projects. By combining simplicity, cross-platform support, and real-world utility, File-Debt-Scan fits perfectly within the “Terminal Toolbox” theme, enabling developers to quickly identify incomplete work and maintain cleaner code. It has No dependencies and works out-of-the-box with Node.js
 
+Perfect! Let’s document all the **flags** in your current `file-debt-scan.cjs` script and how to use them. I’ll also provide a **sample project structure**, an **example data file**, and the **expected JSON/Markdown output**.
+
+
+## CLI Flags & Usage
+
+| Flag                  | Type           | Description                                                                 | Example                                            |       |                                              |          |
+| --------------------- | -------------- | --------------------------------------------------------------------------- | -------------------------------------------------- | ----- | -------------------------------------------- | -------- |
+| `--json`              | boolean        | Outputs full JSON (default).                                                | `node file-debt-scan.cjs src --json`               |       |                                              |          |
+| `--simple`            | boolean        | Outputs a simplified JSON with VS Code clickable links and counts per file. | `node file-debt-scan.cjs src --simple`             |       |                                              |          |
+| `--md`                | boolean        | Outputs a Markdown report suitable for GitHub/GitLab.                       | `node file-debt-scan.cjs src --md`                 |       |                                              |          |
+| `--out <FILE>`        | string         | Save output to file instead of printing to console.                         | `node file-debt-scan.cjs src --md --out report.md` |       |                                              |          |
+| `--pattern <PATTERN>` | string (regex) | Scan custom keywords instead of default `TODO FIXME BUG`.                   | `node file-debt-scan.cjs src --pattern "HACK \| REVIEW"` |
+| `--ignore <NAME>`     | string         | Ignore files/folders (can be repeated).                                     | `node file-debt-scan.cjs src --ignore "tests"`     |       |                                              |          |
+| `--exclude-hidden`    | boolean        | Exclude hidden files (`.gitignore`/dotfiles).                               | `node file-debt-scan.cjs src --exclude-hidden`     |       |                                              |          |
+| `--only-hidden`       | boolean        | Scan only hidden files.                                                     | `node file-debt-scan.cjs src --only-hidden`        |       |                                              |          |
+| `-h` / `--help`       | boolean        | Show help.                                                                  | `node file-debt-scan.cjs -h`                       |       |                                              |          |
+
+> **Default behavior:**
+
+* Scans current directory `.`
+* Skips `node_modules`, `.git`, `.cjs` files
+* Outputs JSON to console
+
+---
+
 ## 🛠 Features
 
 - Scan any folder recursively for `TODO` or `FIXME` markers  
