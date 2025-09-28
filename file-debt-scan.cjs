@@ -1,91 +1,215 @@
 #!/usr/bin/env node
-// file-debt-scan.cjs — scan dir for TODO/FIXME comments, JSON output supported
+// file-debt-scan.cjs — hackathon-ready TODO/FIXME/BUG scanner
+// Features: JSON default, simple mode, VS Code links, Markdown report, fast scan
 
-const fs=require('fs'),path=require('path');
-const argv=process.argv.slice(2);
-const opts={dir:'.',json:false,pattern:'\\b(TODO|FIXME)\\b',ignore:['node_modules','.git'],excludeHidden:false,onlyHidden:false};
-opts.ignore.push(path.basename(__filename));
+const fs = require("fs"),
+  path = require("path");
+const argv = process.argv.slice(2);
 
-for(let i=0;i<argv.length;i++){
-  const a=argv[i];
-  if(a==='--json')opts.json=true;
-  else if(a==='--pattern')opts.pattern=argv[++i]||opts.pattern;
-  else if(a==='--ignore')opts.ignore.push(argv[++i]||'');
-  else if(a==='--exclude-hidden')opts.excludeHidden=true;
-  else if(a==='--only-hidden')opts.onlyHidden=true;
-  else if(a==='-h'||a==='--help'){showHelp();process.exit(0);}
-  else if(!opts.dir||opts.dir==='.')opts.dir=a;
+// --------- Options ---------
+const opts = {
+  dir: ".",
+  json: true,
+  simple: false,
+  md: false,
+  out: null,
+  pattern: "\\b(TODO|FIXME|BUG)\\b",
+  ignore: ["node_modules", ".git"],
+  excludeHidden: false,
+  onlyHidden: false,
+};
+
+// --------- CLI args ---------
+for (let i = 0; i < argv.length; i++) {
+  const a = argv[i];
+  if (a === "--json") opts.json = true;
+  else if (a === "--simple") opts.simple = true;
+  else if (a === "--md") opts.md = true;
+  else if (a === "--out") opts.out = argv[++i];
+  else if (a === "--pattern") opts.pattern = argv[++i] || opts.pattern;
+  else if (a === "--ignore") opts.ignore.push(argv[++i] || "");
+  else if (a === "--exclude-hidden") opts.excludeHidden = true;
+  else if (a === "--only-hidden") opts.onlyHidden = true;
+  else if (a === "-h" || a === "--help") {
+    showHelp();
+    process.exit(0);
+  } else if (!opts.dir || opts.dir === ".") opts.dir = a;
 }
-opts.dir=path.resolve(process.cwd(),opts.dir);
+opts.dir = path.resolve(process.cwd(), opts.dir);
+opts.ignore.push(path.basename(__filename)); // ignore self
+const regex = new RegExp(opts.pattern, "i");
 
-function showHelp(){console.log(`todo-scan — find TODO/FIXME
+// --------- Helper functions ---------
+function showHelp() {
+  console.log(`todo-scan — find TODO/FIXME/BUG
 Usage:
-  todo-scan.js [path] [--json] [--pattern PATTERN] [--ignore NAME] [--exclude-hidden] [--only-hidden]
+  todo-scan.cjs [path] [--json] [--simple] [--md] [--out FILE] [--pattern P] [--ignore N] [--exclude-hidden] [--only-hidden]
 Examples:
-  node todo-scan.js
-  node todo-scan.js src --json
-  node todo-scan.js . --pattern "BUG|HACK"
-  node todo-scan.js . --exclude-hidden
-  node todo-scan.js . --only-hidden
-`);}
+  node todo-scan.cjs
+  node todo-scan.cjs src --json
+  node todo-scan.cjs . --simple
+  node todo-scan.cjs . --md --out report.md
+`);
+}
 
-function isIgnored(name){
-  if(opts.ignore.some(x=>x&&(name===x||name.startsWith(x))))return true;
-  const hidden=name.startsWith('.');
-  if(opts.onlyHidden&&!hidden)return true;
-  if(opts.excludeHidden&&hidden)return true;
+function isIgnored(filePath) {
+  const name = path.basename(filePath);
+  const rel = path.relative(opts.dir, filePath);
+  // Check ignore list: match basename or partial match in basename or relative path
+  if (
+    opts.ignore.some(
+      (x) =>
+        x &&
+        (name === x || name.includes(x) || rel.replace(/\\/g, "/").includes(x))
+    )
+  )
+    return true;
+
+  const hidden = name.startsWith(".");
+  if (opts.onlyHidden && !hidden) return true;
+  if (opts.excludeHidden && hidden) return true;
+  if (filePath.endsWith(".cjs")) return true; // ignore scripts themselves
   return false;
 }
 
-const regex=new RegExp(opts.pattern,'i');
-
-async function walkDir(dir,cb){
-  let entries;
-  try{entries=await fs.promises.readdir(dir,{withFileTypes:true});}catch(e){return;}
-  for(const ent of entries){
-    try{
-      if(isIgnored(ent.name))continue;
-      const full=path.join(dir,ent.name);
-      if(ent.isDirectory())await walkDir(full,cb);
-      else if(ent.isFile())await cb(full);
-    }catch(e){}
-  }
+function readLines(txt) {
+  return txt.split(/\r?\n/);
 }
 
-function readLines(text){return text.split(/\r?\n/);}
+// --------- Collect files ---------
+async function collectFiles(dir, files = []) {
+  let entries;
+  try {
+    entries = await fs.promises.readdir(dir, { withFileTypes: true });
+  } catch {
+    return files;
+  }
+  for (const ent of entries) {
+    const full = path.join(dir, ent.name);
+    if (isIgnored(full)) continue;
+    if (ent.isDirectory()) await collectFiles(full, files);
+    else files.push(full);
+  }
+  return files;
+}
 
-async function scanFile(file){
+// --------- Scan single file ---------
+async function scanFile(file) {
   let data;
-  try{data=await fs.promises.readFile(file,'utf8');}catch(e){return [];}
-  const lines=readLines(data),hits=[];
-  for(let i=0;i<lines.length;i++)if(regex.test(lines[i]))hits.push({file,line:i+1,text:lines[i].trim()});
+  try {
+    data = await fs.promises.readFile(file, "utf8");
+  } catch {
+    return [];
+  }
+  const lines = readLines(data),
+    hits = [];
+  for (let i = 0; i < lines.length; i++)
+    if (regex.test(lines[i]))
+      hits.push({ file, line: i + 1, text: lines[i].trim() });
   return hits;
 }
 
-(async()=>{
-  const results=[];
-  try{
-    await walkDir(opts.dir,async(file)=>{
-      const ext=path.extname(file).toLowerCase();
-      const skipExt=['.png','.jpg','.jpeg','.gif','.bmp','.exe','.dll','.so','.dylib','.zip','.tar','.gz','.min.js'];
-      if(skipExt.includes(ext))return;
-      const hits=await scanFile(file);
-      for(const h of hits)results.push(h);
-    });
-  }catch(e){console.error('Failed to scan:',e.message);process.exit(2);}
-  
-  if(opts.json){console.log(JSON.stringify({scannedDir:opts.dir,count:results.length,items:results},null,2));process.exit(0);}
-  if(results.length===0){console.log('No TODO/FIXME found. ✅');process.exit(0);}
+// --------- Progress bar ---------
+function bar(done, total, todos) {
+  const w = 20,
+    filled = Math.round((done / total) * w);
+  return `[${
+    "#".repeat(filled) + "-".repeat(w - filled)
+  }] ${done}/${total} | TODOs: ${todos}`;
+}
 
-  const byFile=results.reduce((acc,r)=>{(acc[r.file]||(acc[r.file]=[])).push(r);return acc;},{});
-  console.log(`Found ${results.length} marker${results.length>1?'s':''} in ${Object.keys(byFile).length} file${Object.keys(byFile).length>1?'s':''}:\n`);
-  for(const file of Object.keys(byFile).sort()){
-    const items=byFile[file];
-    console.log(`${file} — ${items.length}`);
-    for(const it of items){
-      const preview=it.text.length>120?it.text.slice(0,117)+'...':it.text;
-      console.log(`  ${String(it.line).padStart(4)} │ ${preview}`);
-    }
-    console.log('');
+// --------- Main ---------
+(async () => {
+  let files = await collectFiles(opts.dir);
+  const skipExt = [
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".bmp",
+    ".exe",
+    ".dll",
+    ".so",
+    ".dylib",
+    ".zip",
+    ".tar",
+    ".gz",
+    ".min.js",
+  ];
+  files = files.filter((f) => !skipExt.includes(path.extname(f).toLowerCase()));
+
+  const results = [];
+  let todoCount = 0;
+  let done = 0;
+
+  // Fast scan using Promise.all with batching
+  const BATCH = 20;
+  for (let i = 0; i < files.length; i += BATCH) {
+    const batch = files.slice(i, i + BATCH);
+    const batchResults = await Promise.all(batch.map(scanFile));
+    batchResults.forEach((r) => {
+      results.push(...r);
+      todoCount += r.length;
+    });
+    done += batch.length;
+    process.stdout.write(`\rScanning ${bar(done, files.length, todoCount)}`);
   }
+  console.log("\n");
+
+  // ---------- SIMPLE MODE ----------
+  if (opts.simple) {
+    const summary = results.reduce((a, r) => {
+      const rel = path.relative(opts.dir, r.file),
+        fname = path.basename(r.file);
+      if (!a[rel])
+        a[rel] = {
+          filePath: `vscode://file/${path.resolve(r.file)}:${r.line}`,
+          filename: fname,
+          count: 0,
+        };
+      a[rel].count++;
+      return a;
+    }, {});
+    const simpleOutput = Object.values(summary);
+    if (opts.out)
+      fs.writeFileSync(opts.out, JSON.stringify(simpleOutput, null, 2));
+    else console.log(JSON.stringify(simpleOutput, null, 2));
+    return;
+  }
+
+  // ---------- FULL JSON OUTPUT ----------
+  const summary = { TODO: 0, FIXME: 0, BUG: 0 };
+  results.forEach((r) => {
+    for (const k of Object.keys(summary)) if (r.text.includes(k)) summary[k]++;
+  });
+
+  const out = {
+    scannedDir: opts.dir,
+    count: results.length,
+    summary,
+    items: results,
+  };
+  if (opts.out && !opts.md)
+    fs.writeFileSync(opts.out, JSON.stringify(out, null, 2));
+  else if (opts.json && !opts.md) console.log(JSON.stringify(out, null, 2));
+
+  // ---------- MARKDOWN OUTPUT ----------
+  if (opts.md) {
+    let md = `# TODO/FIXME/BUG Report\n\nScanned: ${opts.dir}\n\n## Summary\n`;
+    md += `- TODO: ${summary.TODO}\n- FIXME: ${summary.FIXME}\n- BUG: ${summary.BUG}\n\n`;
+    md += `## Details\n`;
+    results.forEach((r) => {
+      const rel = path.relative(opts.dir, r.file);
+      md += `- [${rel}:${r.line}](vscode://file/${path.resolve(r.file)}:${
+        r.line
+      }) — ${r.text}\n`;
+    });
+    if (opts.out) fs.writeFileSync(opts.out, md);
+    else console.log(md);
+  }
+
+  // ---------- TERMINAL OUTPUT ----------
+  results.forEach((r) => {
+    console.log(`${path.relative(opts.dir, r.file)}:${r.line} | ${r.text}`);
+  });
 })();
